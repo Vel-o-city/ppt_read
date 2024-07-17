@@ -8,6 +8,7 @@ from PIL import Image
 import pytesseract
 import boto3
 from datetime import datetime
+import re
 import os
 from dotenv import load_dotenv
 
@@ -63,7 +64,17 @@ def extract_locations_and_image_kaushik(pptx_s3_url, crop_percentage=7):
                 crop_box = (0, height - crop_height, width, height)
                 cropped_image = image.crop(crop_box)
                 res = pytesseract.image_to_string(cropped_image)
-                text = "*" + res + "*"
+                res = res.strip().lower()
+                text = res.replace(' ','')
+                pattern = r'^[a-zA-Z0-9()]+-(.*?)(\d{2}x\d{2})'
+
+                # Search for the pattern in the input string
+                match = re.search(pattern, text)
+
+                # Extract the desired part of the string if a match is found
+                if match:
+                    text = match.group(1).strip()  # .strip() removes any leading/trailing whitespace
+                    print(text)
                 remaining_image = image.crop((0, 0, width, height - crop_height))
                 remaining_image_bytes = BytesIO()
                 remaining_image.save(remaining_image_bytes, format=image.format)
@@ -117,7 +128,11 @@ def extract_location_and_image_mantra(ppt_url):
                     print(text)
                     if text[0].isdigit():
                         text = text[2:].strip()
-                    slide_info['location'] = '*' + text + '*'
+                    stripped_text = text.strip().lower()
+                    text = stripped_text.replace(' ','')
+                    result = text.split("-")[2:-2][0]
+                    print(result)
+                    slide_info['location'] = result
             
         if has_image and has_table:
             result_list.append({slide_info['location']:slide_info['url']})
