@@ -26,16 +26,21 @@ app = FastAPI()
 
 class ExtractImagesRequest(BaseModel):
     url: str
+    client : str
 
-@app.post("/ppt_kaushik")
+@app.post("/extract_image_and_location_from_pptx")
 async def extract_and_process(request: ExtractImagesRequest):
     try:
-        result = extract_images_from_pptx_and_upload_to_s3(request.url)
-        return result
+        if request.client == 'kaushik':
+            result = extract_locations_and_image_kaushik(request.url)
+            return result
+        elif request.client == 'mantra':
+            result = extract_location_and_image_mantra(request.url)
+            return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def extract_images_from_pptx_and_upload_to_s3(pptx_s3_url, crop_percentage=7):
+def extract_locations_and_image_kaushik(pptx_s3_url, crop_percentage=7):
     response = requests.get(pptx_s3_url)
     pptx_bytes = BytesIO(response.content)
     pptx_bytes.seek(0)
@@ -70,6 +75,54 @@ def extract_images_from_pptx_and_upload_to_s3(pptx_s3_url, crop_percentage=7):
                 s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
                 result_list.append({text: s3_url})
     return result_list
+
+
+def extract_location_and_image_mantra(ppt_url):
+    response = requests.get(ppt_url)
+    pptx_bytes = BytesIO(response.content)
+    pptx_bytes.seek(0)
+    prs = Presentation(pptx_bytes)
+    result_list=[]
+
+    for slide_index in range(1,len(prs.slides) -1):
+        slide_title = None
+        if not slide_title:
+            slide_title = f"slide_{slide_index}"
+        slide = prs.slides[slide_index]
+        slide_info={}
+        has_image = False
+        has_table = False
+        for shape_number,shape in enumerate(slide.shapes,start=1):
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                has_image = True
+                if shape.image:
+                    image_part = shape.image
+                    image_stream = BytesIO(image_part.blob)
+                    image= Image.open(image_stream)
+                    image_bytes = BytesIO()
+                    image.save(image_bytes , format=image.format)
+                    image_bytes.seek(0)
+                    folder_structure = 'prod/ldoc/inventoryManagement'
+                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                    s3_key = f"{folder_structure}/{slide_title}_shape_{shape_number}_{timestamp}.{image.format.lower()}"
+                    s3.upload_fileobj(image_bytes, aws_s3_bucket_name, s3_key,ExtraArgs={'ACL': 'public-read'})
+                    s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
+                    slide_info['url'] = s3_url
+
+            if shape.shape_type == 19:
+                has_table = True
+                table = shape.table
+                if table.rows and table.columns:
+                    text = table.cell(0,0).text.strip()
+                    print(text)
+                    if text[0].isdigit():
+                        text = text[2:].strip()
+                    slide_info['location'] = '*' + text + '*'
+            
+        if has_image and has_table:
+            result_list.append({slide_info['location']:slide_info['url']})
+    return result_list
+
 
 if __name__ == "__main__":
     import uvicorn
