@@ -66,7 +66,7 @@ def extract_images_from_pptx_and_upload_to_s3(pptx_s3_url, crop_percentage=7):
                 folder_structure = 'prod/ldoc/inventoryManagement'
                 timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
                 s3_key = f"{folder_structure}/{slide_title}_shape_{shape_number}_{timestamp}.{image.format.lower()}"
-                s3.upload_fileobj(remaining_image_bytes, aws_s3_bucket_name, s3_key)
+                s3.upload_fileobj(remaining_image_bytes, aws_s3_bucket_name, s3_key,ExtraArgs={'ACL': 'public-read'})
                 s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
                 result_list.append({text: s3_url})
     return result_list
