@@ -41,6 +41,10 @@ async def extract_and_process(request: ExtractImagesRequest):
         elif request.client == 'chitra':
             result = extract_location_and_image_chitra(request.url)
             return result
+        elif request.client == 'sun':
+            result = extract_location_and_image_sun(request.url)
+            return result
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -264,10 +268,65 @@ def extract_location_and_image_chitra(ppt_url):
 
         if has_image and has_table and 'location' in slide_info and 'url' in slide_info:
             result_list.append({slide_info['location']: slide_info['url']})
-
     return result_list
 
+def extract_location_and_image_sun(ppt_url):
+    response = requests.get(ppt_url)
+    pptx_bytes = BytesIO(response.content)
+    pptx_bytes.seek(0)
+    prs = Presentation(pptx_bytes)
+    results = []
+    image_count=0
 
+    for slide_number, slide in enumerate(prs.slides, start=1):
+        slide_info = {}
+        has_image = False
+        has_text = False
+
+        # Loop through all shapes in the slide
+        for shape in slide.shapes:
+            try:
+                # Direct picture shape
+                if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                    has_image = True
+                    image = shape.image
+                    image_data = image.blob
+                    image_ext = image.ext
+                    image_stream = BytesIO(image_data)
+                    img = Image.open(image_stream)
+                    image_bytes = BytesIO()
+                    img.save(image_bytes, format=img.format if img.format else 'PNG')
+                    image_bytes.seek(0)
+
+                    folder_structure = 'prod/ldoc/inventoryManagement'
+                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                    s3_key = f"{folder_structure}/slide_{slide_number}_image_{image_count}_{timestamp}.{image_ext}"
+                    image_count+=1
+
+                    try:
+                        s3.upload_fileobj(image_bytes, aws_s3_bucket_name, s3_key, ExtraArgs={'ACL': 'public-read'})
+                        s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
+                        slide_info['url'] = s3_url
+                    except Exception as e:
+                        print(f"Error uploading to S3: {str(e)}")
+                
+                elif shape.shape_type == MSO_SHAPE_TYPE.TEXT_BOX:
+                    has_text = True
+                    text = shape.text
+                    location_match = re.search(r'Location:\s*(.*?)\s*(Size|Type|$)', text)
+                    if location_match:
+                        location_text = location_match.group(1).strip()
+                        lowered_text = location_text.lower()
+                        text = lowered_text.replace(' ','')
+                        result = re.sub(r'[^\w\s]', '', text)
+                        slide_info['location'] = result
+
+            except AttributeError:
+                continue
+        
+        if has_image and has_text:
+            results.append({slide_info['location']: slide_info['url']})
+    return results
 
 if __name__ == "__main__":
     import uvicorn
