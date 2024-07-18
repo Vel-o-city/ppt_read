@@ -198,7 +198,6 @@ def extract_location(text):
         result = re.sub(r'[^\w\s]', '', text)
         return result
     else:
-        print('No hyphen found in the text')
         return text
 
 
@@ -259,7 +258,6 @@ def extract_location_and_image_chitra(ppt_url):
                 table = shape.table
                 if table.rows and table.columns:
                     text = table.cell(0, 0).text.strip()
-                    print(text)
                     location = extract_location(text)
                     if location:
                         slide_info['location'] = location
