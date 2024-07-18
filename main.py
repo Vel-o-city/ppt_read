@@ -38,6 +38,9 @@ async def extract_and_process(request: ExtractImagesRequest):
         elif request.client == 'mantra':
             result = extract_location_and_image_mantra(request.url)
             return result
+        elif request.client == 'chitra':
+            result = extract_location_and_image_chitra(request.url)
+            return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -136,6 +139,136 @@ def extract_location_and_image_mantra(ppt_url):
         if has_image and has_table:
             result_list.append({slide_info['location']:slide_info['url']})
     return result_list
+
+
+def extract_location_and_image_mantra(ppt_url):
+    response = requests.get(ppt_url)
+    pptx_bytes = BytesIO(response.content)
+    pptx_bytes.seek(0)
+    prs = Presentation(pptx_bytes)
+    result_list=[]
+
+    for slide_index in range(1,len(prs.slides) -1):
+        slide_title = None
+        if not slide_title:
+            slide_title = f"slide_{slide_index}"
+        slide = prs.slides[slide_index]
+        slide_info={}
+        has_image = False
+        has_table = False
+        for shape_number,shape in enumerate(slide.shapes,start=1):
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                has_image = True
+                if shape.image:
+                    image_part = shape.image
+                    image_stream = BytesIO(image_part.blob)
+                    image= Image.open(image_stream)
+                    image_bytes = BytesIO()
+                    image.save(image_bytes , format=image.format)
+                    image_bytes.seek(0)
+                    folder_structure = 'prod/ldoc/inventoryManagement'
+                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                    s3_key = f"{folder_structure}/{slide_title}_shape_{shape_number}_{timestamp}.{image.format.lower()}"
+                    s3.upload_fileobj(image_bytes, aws_s3_bucket_name, s3_key,ExtraArgs={'ACL': 'public-read'})
+                    s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
+                    slide_info['url'] = s3_url
+
+            if shape.shape_type == 19:
+                has_table = True
+                table = shape.table
+                if table.rows and table.columns:
+                    text = table.cell(0,0).text.strip()
+                    if text[0].isdigit():
+                        text = text[2:].strip()
+                    slide_info['location'] = '*' + text + '*'
+            
+        if has_image and has_table:
+            result_list.append({slide_info['location']:slide_info['url']})
+    return result_list
+
+def extract_location(text):
+    parts = text.split('-')
+    
+    # Check if there's at least one hyphen in the text
+    if len(parts) > 1:
+        # Take the last part and strip any leading/trailing whitespace
+        location = parts[-1].strip()
+        lowered_text = location.lower()
+        text = lowered_text.replace(' ','')
+        result = re.sub(r'[^\w\s]', '', text)
+        return result
+    else:
+        print('No hyphen found in the text')
+        return text
+
+
+def extract_location_and_image_chitra(ppt_url):
+    response = requests.get(ppt_url)
+    pptx_bytes = BytesIO(response.content)
+    pptx_bytes.seek(0)
+    prs = Presentation(pptx_bytes)
+    result_list = []
+
+    for slide_index, slide in enumerate(prs.slides):
+        slide_title = f"slide_{slide_index}"
+        slide_info = {}
+        has_image = False
+        has_table = False
+
+        for shape_number, shape in enumerate(slide.shapes, start=1):
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                has_image = True
+                try:
+                    # Method 1: Try to get image through shape.image
+                    image_part = shape.image
+                    image_ext = image_part.ext
+                    image_data = image_part.blob
+                except AttributeError:
+                    try:
+                        # Method 2: Try to get image through slide.part.rels
+                        blip = shape._element.xpath('.//a:blip')[0]
+                        rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                        image_part = slide.part.rels[rId].target_part
+                        
+                        image_ext = 'png'  # Default to png if no extension is found
+                        
+                        image_data = image_part.blob
+                    except Exception as e:
+                        print(f"Failed to extract image from shape {shape_number} on slide {slide_index}: {str(e)}")
+                        continue
+
+                image_stream = BytesIO(image_data)
+                image = Image.open(image_stream)
+                image_bytes = BytesIO()
+                image.save(image_bytes, format=image.format if image.format else 'PNG')
+                image_bytes.seek(0)
+
+                folder_structure = 'prod/ldoc/inventoryManagement'
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                s3_key = f"{folder_structure}/{slide_title}_shape_{shape_number}_{timestamp}.{image_ext}"
+
+                try:
+                    s3.upload_fileobj(image_bytes, aws_s3_bucket_name, s3_key, ExtraArgs={'ACL': 'public-read'})
+                    s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
+                    slide_info['url'] = s3_url
+                except Exception as e:
+                    print(f"Error uploading to S3: {str(e)}")
+            
+            if shape.shape_type == MSO_SHAPE_TYPE.TABLE:
+                has_table = True
+                table = shape.table
+                if table.rows and table.columns:
+                    text = table.cell(0, 0).text.strip()
+                    print(text)
+                    location = extract_location(text)
+                    if location:
+                        slide_info['location'] = location
+
+        if has_image and has_table and 'location' in slide_info and 'url' in slide_info:
+            result_list.append({slide_info['location']: slide_info['url']})
+
+    return result_list
+
 
 
 if __name__ == "__main__":
