@@ -5,6 +5,7 @@ from io import BytesIO
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from PIL import Image
+from fastapi.middleware.cors import CORSMiddleware
 import pytesseract
 import boto3
 from datetime import datetime
@@ -24,6 +25,15 @@ s3 = boto3.client('s3',
                   region_name=aws_region)
 
 app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 class ExtractImagesRequest(BaseModel):
     url: str
