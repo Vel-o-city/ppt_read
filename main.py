@@ -95,7 +95,7 @@ def extract_location_and_image_mantra(ppt_url):
     prs = Presentation(pptx_bytes)
     result_list=[]
 
-    for slide_index in range(1,len(prs.slides) -1):
+    for slide_index in range(len(prs.slides)):
         slide_title = None
         if not slide_title:
             slide_title = f"slide_{slide_index}"
