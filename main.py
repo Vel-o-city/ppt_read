@@ -53,7 +53,7 @@ async def extract_and_process(request: ExtractImagesRequest):
         elif request.client == 'sun':
             result = extract_location_and_image_sun(request.url)
             return result
-        elif request.client == 'evergreen':
+        elif request.clieny == 'evergreen':
             result = extract_location_and_image_evergreen(request.url)
             return result
         
@@ -76,7 +76,26 @@ def extract_locations_and_image_kaushik(pptx_s3_url, crop_percentage=7):
             slide_title = f"slide_{slide_number}"
         for shape_number, shape in enumerate(slide.shapes, start=1):
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                image_stream = BytesIO(shape.image.blob)
+                has_image = True
+                try:
+                    # Method 1: Try to get image through shape.image
+                    image_part = shape.image
+                    image_ext = image_part.ext
+                    image_data = image_part.blob
+                except AttributeError:
+                    try:
+                        # Method 2: Try to get image through slide.part.rels
+                        blip = shape._element.xpath('.//a:blip')[0]
+                        rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                        image_part = slide.part.rels[rId].target_part
+                        
+                        image_ext = 'png'  # Default to png if no extension is found
+                        
+                        image_data = image_part.blob
+                    except Exception as e:
+                        print(f"Failed to extract image from shape {shape_number} on slide {slide_number}: {str(e)}")
+                        continue
+                image_stream = BytesIO(image_data)
                 image = Image.open(image_stream)
                 width, height = image.size
                 crop_height = int(height * crop_percentage / 100)
@@ -100,7 +119,7 @@ def extract_locations_and_image_kaushik(pptx_s3_url, crop_percentage=7):
                 remaining_image_bytes.seek(0)
                 folder_structure = 'prod/ldoc/inventoryManagement'
                 timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-                s3_key = f"{folder_structure}/{slide_title}_shape_{shape_number}_{timestamp}.{image.format.lower()}"
+                s3_key = f"{folder_structure}/{slide_title}_shape_{shape_number}_{timestamp}.{image_ext}"
                 s3.upload_fileobj(remaining_image_bytes, aws_s3_bucket_name, s3_key,ExtraArgs={'ACL': 'public-read'})
                 s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
                 result_list.append({text: s3_url})
@@ -194,13 +213,9 @@ def extract_location_and_image_mantra(ppt_url):
                 table = shape.table
                 if table.rows and table.columns:
                     text = table.cell(0,0).text.strip()
-                    text = table.cell(0,0).text.strip()
-                    splitted=text.split('-')
-                    text = splitted[-3]
-                    lowered_text = text.lower()
-                    text = lowered_text.replace(' ','')
-                    result = re.sub(r'[^\w\s]', '', text)
-                    slide_info['location'] = result
+                    if text[0].isdigit():
+                        text = text[2:].strip()
+                    slide_info['location'] = '*' + text + '*'
             
         if has_image and has_table:
             result_list.append({slide_info['location']:slide_info['url']})
@@ -349,7 +364,7 @@ def extract_location_and_image_evergreen(ppt_url):
     response = requests.get(ppt_url)
     pptx_bytes = BytesIO(response.content)
     pptx_bytes.seek(0)
-    presentation = Presentation(pptx_bytes)
+    presentation = Presentation(ppt_url)
     result_list = []
     # Ensure the output directory exists
     image_count = 0
