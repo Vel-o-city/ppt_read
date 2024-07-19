@@ -26,7 +26,6 @@ s3 = boto3.client('s3',
 
 app = FastAPI()
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -53,6 +52,9 @@ async def extract_and_process(request: ExtractImagesRequest):
             return result
         elif request.client == 'sun':
             result = extract_location_and_image_sun(request.url)
+            return result
+        elif request.client == 'evergreen':
+            result = extract_location_and_image_evergreen(request.url)
             return result
         
     except Exception as e:
@@ -192,9 +194,13 @@ def extract_location_and_image_mantra(ppt_url):
                 table = shape.table
                 if table.rows and table.columns:
                     text = table.cell(0,0).text.strip()
-                    if text[0].isdigit():
-                        text = text[2:].strip()
-                    slide_info['location'] = '*' + text + '*'
+                    text = table.cell(0,0).text.strip()
+                    splitted=text.split('-')
+                    text = splitted[-3]
+                    lowered_text = text.lower()
+                    text = lowered_text.replace(' ','')
+                    result = re.sub(r'[^\w\s]', '', text)
+                    slide_info['location'] = result
             
         if has_image and has_table:
             result_list.append({slide_info['location']:slide_info['url']})
@@ -338,6 +344,66 @@ def extract_location_and_image_sun(ppt_url):
             results.append({slide_info['location']: slide_info['url']})
     return results
 
+
+def extract_location_and_image_evergreen(ppt_url):
+    response = requests.get(ppt_url)
+    pptx_bytes = BytesIO(response.content)
+    pptx_bytes.seek(0)
+    presentation = Presentation(pptx_bytes)
+    result_list = []
+    # Ensure the output directory exists
+    image_count = 0
+    has_picture = False
+    has_text = False
+    # Loop through all slides in the presentation
+    for slide_number,slide in enumerate(presentation.slides,start=1):
+        slide_info = {}
+        for shape in slide.shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+                has_picture = True
+                if shape.text:
+                    has_text = True
+                    text = shape.text
+                    pattern = r".*?(?=\d{2}\s*x\s*\d{2})"
+                    # Search for the pattern in the input string
+                    match = re.search(pattern, text,re.IGNORECASE)
+                    if match:
+                        text = match.group().strip()
+                        lowered_text = text.lower()
+                        text = lowered_text.replace(' ','')
+                        result = re.sub(r'[^\w\s]', '', text)
+                    slide_info['location']=result
+                else:
+                    continue
+        
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                if shape.image:
+                    has_image = True
+                    image = shape.image
+                    image_data = image.blob
+                    image_ext = image.ext
+                    image_stream = BytesIO(image_data)
+                    img = Image.open(image_stream)
+                    image_bytes = BytesIO()
+                    img.save(image_bytes, format=img.format if img.format else 'PNG')
+                    image_bytes.seek(0)
+                    folder_structure = 'prod/ldoc/inventoryManagement'
+                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                    s3_key = f"{folder_structure}/slide_{slide_number}_image_{image_count}_{timestamp}.{image_ext}"
+                    image_count+=1
+
+                    try:
+                        s3.upload_fileobj(image_bytes, aws_s3_bucket_name, s3_key, ExtraArgs={'ACL': 'public-read'})
+                        s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
+                        slide_info['url'] = s3_url
+                    except Exception as e:
+                        print(f"Error uploading to S3: {str(e)}")
+        if has_image and has_picture:
+            result_list.append({slide_info['location']:slide_info['url']})
+    return result_list
+
+
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
