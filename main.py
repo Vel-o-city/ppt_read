@@ -66,7 +66,9 @@ def extract_locations_and_image_kaushik(pptx_s3_url, crop_percentage=7):
     pptx_bytes.seek(0)
     presentation = Presentation(pptx_bytes)
     result_list = []
-    for slide_number, slide in enumerate(presentation.slides, start=1):
+    total_slides = len(presentation.slides)
+    for slide_number in range(1, total_slides - 2):
+        slide = presentation.slides[slide_number]
         slide_title = None
         for shape in slide.shapes:
             if shape.has_text_frame:
