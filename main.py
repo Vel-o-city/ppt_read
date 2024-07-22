@@ -53,7 +53,7 @@ async def extract_and_process(request: ExtractImagesRequest):
         elif request.client == 'sun':
             result = extract_location_and_image_sun(request.url)
             return result
-        elif request.clieny == 'evergreen':
+        elif request.client == 'evergreen':
             result = extract_location_and_image_evergreen(request.url)
             return result
         
@@ -135,7 +135,7 @@ def extract_location_and_image_mantra(ppt_url):
     prs = Presentation(pptx_bytes)
     result_list=[]
 
-    for slide_index in range(len(prs.slides)):
+    for slide_index in range(1,len(prs.slides)-1):
         slide_title = None
         if not slide_title:
             slide_title = f"slide_{slide_index}"
@@ -178,50 +178,6 @@ def extract_location_and_image_mantra(ppt_url):
     return result_list
 
 
-def extract_location_and_image_mantra(ppt_url):
-    response = requests.get(ppt_url)
-    pptx_bytes = BytesIO(response.content)
-    pptx_bytes.seek(0)
-    prs = Presentation(pptx_bytes)
-    result_list=[]
-
-    for slide_index in range(1,len(prs.slides) -1):
-        slide_title = None
-        if not slide_title:
-            slide_title = f"slide_{slide_index}"
-        slide = prs.slides[slide_index]
-        slide_info={}
-        has_image = False
-        has_table = False
-        for shape_number,shape in enumerate(slide.shapes,start=1):
-            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                has_image = True
-                if shape.image:
-                    image_part = shape.image
-                    image_stream = BytesIO(image_part.blob)
-                    image= Image.open(image_stream)
-                    image_bytes = BytesIO()
-                    image.save(image_bytes , format=image.format)
-                    image_bytes.seek(0)
-                    folder_structure = 'prod/ldoc/inventoryManagement'
-                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-                    s3_key = f"{folder_structure}/{slide_title}_shape_{shape_number}_{timestamp}.{image.format.lower()}"
-                    s3.upload_fileobj(image_bytes, aws_s3_bucket_name, s3_key,ExtraArgs={'ACL': 'public-read'})
-                    s3_url = f"https://{aws_s3_bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
-                    slide_info['url'] = s3_url
-
-            if shape.shape_type == 19:
-                has_table = True
-                table = shape.table
-                if table.rows and table.columns:
-                    text = table.cell(0,0).text.strip()
-                    if text[0].isdigit():
-                        text = text[2:].strip()
-                    slide_info['location'] = '*' + text + '*'
-            
-        if has_image and has_table:
-            result_list.append({slide_info['location']:slide_info['url']})
-    return result_list
 
 def extract_location(text):
     parts = text.split('-')
@@ -245,8 +201,10 @@ def extract_location_and_image_chitra(ppt_url):
     prs = Presentation(pptx_bytes)
     result_list = []
 
-    for slide_index, slide in enumerate(prs.slides):
-        slide_title = f"slide_{slide_index}"
+    total_slides = len(prs.slides)
+    for slide_number in range(1, total_slides - 1):
+        slide = prs.slides[slide_number]
+        slide_title = f"slide_{slide_number}"
         slide_info = {}
         has_image = False
         has_table = False
@@ -270,7 +228,7 @@ def extract_location_and_image_chitra(ppt_url):
                         
                         image_data = image_part.blob
                     except Exception as e:
-                        print(f"Failed to extract image from shape {shape_number} on slide {slide_index}: {str(e)}")
+                        print(f"Failed to extract image from shape {shape_number} on slide {slide_number}: {str(e)}")
                         continue
 
                 image_stream = BytesIO(image_data)
@@ -311,7 +269,9 @@ def extract_location_and_image_sun(ppt_url):
     results = []
     image_count=0
 
-    for slide_number, slide in enumerate(prs.slides, start=1):
+    total_slides = len(prs.slides)
+    for slide_number in range(1,total_slides):
+        slide = prs.slides[slide_number]
         slide_info = {}
         has_image = False
         has_text = False
@@ -366,18 +326,19 @@ def extract_location_and_image_evergreen(ppt_url):
     response = requests.get(ppt_url)
     pptx_bytes = BytesIO(response.content)
     pptx_bytes.seek(0)
-    presentation = Presentation(ppt_url)
+    prs = Presentation(pptx_bytes)
     result_list = []
     # Ensure the output directory exists
     image_count = 0
-    has_picture = False
+    has_image = False
     has_text = False
     # Loop through all slides in the presentation
-    for slide_number,slide in enumerate(presentation.slides,start=1):
+    total_slides = len(prs.slides)
+    for slide_number in range(1,total_slides):
+        slide = prs.slides[slide_number]
         slide_info = {}
         for shape in slide.shapes:
             if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
-                has_picture = True
                 if shape.text:
                     has_text = True
                     text = shape.text
@@ -415,7 +376,7 @@ def extract_location_and_image_evergreen(ppt_url):
                         slide_info['url'] = s3_url
                     except Exception as e:
                         print(f"Error uploading to S3: {str(e)}")
-        if has_image and has_picture:
+        if has_image and has_text:
             result_list.append({slide_info['location']:slide_info['url']})
     return result_list
 
