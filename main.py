@@ -334,7 +334,7 @@ def extract_location_and_image_evergreen(ppt_url):
     has_text = False
     # Loop through all slides in the presentation
     total_slides = len(prs.slides)
-    for slide_number in range(1,total_slides):
+    for slide_number in range(2,total_slides):
         slide = prs.slides[slide_number]
         slide_info = {}
         for shape in slide.shapes:
